@@ -393,6 +393,76 @@ const complete_deposit_request = (req, res) => {
       res.status(500).json({ error: 'An error occurred' });
     }
   };
+
+
+
+  // ##### DIRECT DEPOSIT TO USER ACCOUNT WITHOUT ANY REQUEST 
+
+
+
+  
+    const deposit_direct = (req, res) => {
+      try {
+        const userId = req.body.userId;
+        const amount = req.body.amount || 0;
+    
+        // Check if the deposited amount is 0 or negative
+        if (amount <= 0) {
+          return res.status(400).json({ error: 'Please enter a valid amount to deposit.' });
+        }
+    
+        // Update the user's balance
+        const updateBalanceQuery = 'UPDATE users SET balance = balance + ? WHERE id = ?';
+        db.query(updateBalanceQuery, [amount, userId], (updateBalanceError, updateBalanceResult) => {
+          if (updateBalanceError) {
+            console.error(updateBalanceError);
+            res.status(500).json({ error: 'An error occurred while updating user balance.' });
+          } else {
+            // Get the updated balance
+            const getUserBalanceQuery = 'SELECT balance FROM users WHERE id = ?';
+            db.query(getUserBalanceQuery, [userId], (balanceError, balanceResult) => {
+              if (balanceError) {
+                console.error(balanceError);
+                res.status(500).json({ error: 'An error occurred while retrieving user balance.' });
+              } else {
+                const updatedBalance = balanceResult[0].balance;
+    
+                // Add deposit to history
+                const timestamp = new Date();
+                const depositHistoryQuery = 'INSERT INTO deposit_history (user_id, amount, timestamp) VALUES (?, ?, ?)';
+                db.query(depositHistoryQuery, [userId, amount, timestamp], (historyError) => {
+                  if (historyError) {
+                    console.error(historyError);
+                    res.status(500).json({ error: 'An error occurred while adding deposit history.' });
+                  } else {
+                    // Add notification to the notifications table
+                    const notificationMessage = `You have Deposited amount of ${amount} USDT.`;
+    
+                    const addNotificationQuery = 'INSERT INTO notifications (user_id, message, is_read, created_at) VALUES (?, ?, ?, ?)';
+                    db.query(addNotificationQuery, [userId, notificationMessage, 0, timestamp], (notificationError) => {
+                      if (notificationError) {
+                        console.error(notificationError);
+                        res.status(500).json({ error: 'An error occurred while adding notification.' });
+                      } else {
+                        res.status(200).json({
+                          message: 'Amount Deposited Successfully',
+                          updatedBalance: updatedBalance,
+                        });
+                      }
+                    });
+                  }
+                });
+              }
+            });
+          }
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'An error occurred' });
+      }
+    };
+  
+
   
 
 // // ######## FETCH DEPOSIT HISTORY ######### //
@@ -768,6 +838,32 @@ const edit_event = async (req, res) => {
   };
   
   
+  const get_single_event = async (req, res) => {
+    try {
+        const { event_id } = req.params;
+        
+        // Query the database to retrieve the event data by event_id
+        const getEventQuery = 'SELECT * FROM events WHERE event_id = ?';
+        db.query(getEventQuery, [event_id], (getEventError, eventResult) => {
+            if (getEventError) {
+                console.error(getEventError);
+                return res.status(500).json({ error: 'An error occurred while fetching the event.' });
+            }
+
+            if (eventResult.length === 0) {
+                return res.status(404).json({ error: 'Event not found.' });
+            }
+
+            const event = eventResult[0];
+            res.status(200).json({ event });
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'An error occurred.' });
+    }
+};
+
+
   
 
   
@@ -1433,23 +1529,72 @@ const reset_user_account = (req, res) => {
   const { user_id } = req.body;
 
   // Update user's data_completed and sets_completed_today to reset their account
-  const resetAccountSql = 'UPDATE users SET data_completed = 0 WHERE id = ?';
+  const resetAccountSql = 'UPDATE users SET data_completed = 0, merge_count = 0, frozen_count = 0 WHERE id = ?';
 
-  db.query(resetAccountSql, [user_id], (err, result) => {
+  // Update user_frozen_products table
+  const resetFrozenProductsSql = 'DELETE FROM user_frozen_products WHERE user_id = ?';
+
+  // Update user_merged_products table
+  const resetMergedProductsSql = 'DELETE FROM user_merged_products WHERE user_id = ?';
+
+  db.beginTransaction((err) => {
     if (err) {
-      console.error('Error resetting user account: ' + err.message);
+      console.error('Error starting a transaction: ' + err.message);
       return res.status(500).json({ error: 'Internal server error' });
     }
 
-    // Check if any rows were affected (i.e., if the user ID was valid)
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'User not found' });
-    }
+    // Reset user account in the 'users' table
+    db.query(resetAccountSql, [user_id], (err, result) => {
+      if (err) {
+        db.rollback(() => {
+          console.error('Error resetting user account: ' + err.message);
+          return res.status(500).json({ error: 'Internal server error' });
+        });
+      }
 
-    // Account successfully reset
-    return res.status(200).json({ message: 'User account reset successfully' });
+      // Check if any rows were affected (i.e., if the user ID was valid)
+      if (result.affectedRows === 0) {
+        db.rollback(() => {
+          return res.status(404).json({ error: 'User not found' });
+        });
+      }
+
+      // Reset user_frozen_products table
+      db.query(resetFrozenProductsSql, [user_id], (err) => {
+        if (err) {
+          db.rollback(() => {
+            console.error('Error resetting user_frozen_products table: ' + err.message);
+            return res.status(500).json({ error: 'Internal server error' });
+          });
+        }
+
+        // Reset user_merged_products table
+        db.query(resetMergedProductsSql, [user_id], (err) => {
+          if (err) {
+            db.rollback(() => {
+              console.error('Error resetting user_merged_products table: ' + err.message);
+              return res.status(500).json({ error: 'Internal server error' });
+            });
+          }
+
+          // Commit the transaction
+          db.commit((err) => {
+            if (err) {
+              db.rollback(() => {
+                console.error('Error committing transaction: ' + err.message);
+                return res.status(500).json({ error: 'Internal server error' });
+              });
+            }
+
+            // Account successfully reset
+            return res.status(200).json({ message: 'User account reset successfully' });
+          });
+        });
+      });
+    });
   });
 };
+
 
 // // Define an endpoint for checking if the user can start a new set
 // app.get('/can-start-new-set/:user_id', (req, res) => {
@@ -1488,72 +1633,13 @@ const reset_user_account = (req, res) => {
   
 
 
-
-// const set_merge_product = (req, res) => {
-//   const { user_id, product_id, merge_target } = req.body;
-
-//   // Insert the merge_target into a new line in user_merge_targets
-//   const insertUserMergeTargetQuery = 'INSERT INTO user_merge_targets (user_id, product_id, merge_target, merge_count, max_merge_limit) VALUES (?, ?, ?, 0, 3)';
-
-//   db.query(insertUserMergeTargetQuery, [user_id, product_id, merge_target], (err) => {
-//     if (err) {
-//       console.error('Error inserting user merge target:', err);
-//       return res.status(500).json({ error: 'Internal server error' });
-//     }
-
-//     // Fetch the user's current merge count and max merge limit for the merge_target
-//     const checkMergeLimitQuery = 'SELECT merge_count, max_merge_limit FROM user_merge_targets WHERE user_id = ? AND merge_target = ?';
-//     db.query(checkMergeLimitQuery, [user_id, merge_target], (err, mergeLimitResult) => {
-//       if (err) {
-//         console.error('Error fetching merge limit data:', err);
-//         return res.status(500).json({ error: 'Internal server error' });
-//       }
-
-//       if (mergeLimitResult.length === 0) {
-//         return res.status(400).json({ error: 'User merge target not found' });
-//       }
-
-//       const { merge_count, max_merge_limit } = mergeLimitResult[0];
-
-//       if (merge_count >= max_merge_limit) {
-//         return res.status(400).json({ error: `Maximum merge limit reached for merge_target ${merge_target}` });
-//       }
-
-//       // Fetch the product's price
-//       const getProductPriceQuery = 'SELECT product_price FROM products WHERE product_id = ?';
-//       db.query(getProductPriceQuery, [product_id], (err, productResult) => {
-//         if (err) {
-//           console.error('Error fetching product price:', err);
-//           return res.status(500).json({ error: 'Internal server error' });
-//         }
-
-//         if (productResult.length === 0) {
-//           return res.status(400).json({ error: 'Product not found' });
-//         }
-
-//         const productPrice = productResult[0].product_price;
-
-//         // Update the user's merge target and increment merge_count in the user_merge_targets table
-//         const updateUserMergeTargetQuery = 'UPDATE user_merge_targets SET product_id = ? AND merge_count = merge_count + 1 WHERE user_id = ? AND merge_target = ?';
-//         db.query(updateUserMergeTargetQuery, [user_id,product_id, merge_target], (err) => {
-//           if (err) {
-//             console.error('Error updating user merge target:', err);
-//             return res.status(500).json({ error: 'Internal server error' });
-//           }
-
-//             // No need to update the user's balance since it's not debited
-//             res.status(200).json({ message: 'Product assigned successfully' });
-//           });
-//       });
-//     });
-//   });
-// };
+// ##### SET MERGE TARGET API CODE
 
 const set_merge_product = (req, res) => {
   const { user_id, product_id, merge_target } = req.body;
 
   // Insert the merge_target into a new line in user_merge_targets
-  const insertUserMergeTargetQuery = 'INSERT INTO user_merge_targets (user_id, product_id, merge_target) VALUES (?, ?, ?)';
+  const insertUserMergeTargetQuery = 'INSERT INTO user_merged_products (user_id, product_id, merge_target) VALUES (?, ?, ?)';
 
   db.query(insertUserMergeTargetQuery, [user_id, product_id, merge_target], (err) => {
     if (err) {
@@ -1575,49 +1661,57 @@ const set_merge_product = (req, res) => {
 
       const merge_count = userResult[0].merge_count;
 
-      // Update the user's merge_count in the users table
-      const updateUserMergeCountQuery = 'UPDATE users SET merge_count = ? WHERE id = ?';
-      db.query(updateUserMergeCountQuery, [merge_count + 1, user_id], (err) => {
+      // Fetch the max merge limit for the merge_target
+      const checkMergeLimitQuery = 'SELECT max_limit FROM user_merged_products WHERE user_id = ? AND merge_target = ?';
+      db.query(checkMergeLimitQuery, [user_id, merge_target], (err, mergeLimitResult) => {
         if (err) {
-          console.error('Error updating user merge count:', err);
+          console.error('Error fetching merge limit data:', err);
           return res.status(500).json({ error: 'Internal server error' });
         }
 
-        // Fetch the max merge limit for the merge_target
-        const checkMergeLimitQuery = 'SELECT max_merge_limit FROM user_merge_targets WHERE user_id = ? AND merge_target = ?';
-        db.query(checkMergeLimitQuery, [user_id, merge_target], (err, mergeLimitResult) => {
+        if (mergeLimitResult.length === 0) {
+          return res.status(400).json({ error: 'User merge target not found' });
+        }
+
+        const  max_merge_limit  = mergeLimitResult[0].max_limit;
+
+        
+
+        // Check if the merge count is greater than or equal to the max merge limit
+        if (merge_count >= max_merge_limit) {
+          return res.status(400).json({ error: `Maximum merge limit reached for the user ${user_id}` });
+        }
+
+        // Fetch the product's price
+        const getProductPriceQuery = 'SELECT product_price FROM products WHERE product_id = ?';
+        db.query(getProductPriceQuery, [product_id], (err, productResult) => {
           if (err) {
-            console.error('Error fetching merge limit data:', err);
+            console.error('Error fetching product price:', err);
             return res.status(500).json({ error: 'Internal server error' });
           }
 
-          if (mergeLimitResult.length === 0) {
-            return res.status(400).json({ error: 'User merge target not found' });
+          if (productResult.length === 0) {
+            return res.status(400).json({ error: 'Product not found' });
           }
 
-          const { max_merge_limit } = mergeLimitResult[0];
+          const productPrice = productResult[0].product_price;
 
-          // Check if the merge count is greater than or equal to the max merge limit
-          if (merge_count >= max_merge_limit) {
-            return res.status(400).json({ error: `Maximum merge limit reached for merge_target ${merge_target}` });
+          // Update the user's merge_count in the users table
+          const updateUserMergeCountQuery = 'UPDATE users SET merge_count = ? WHERE id = ?';
+          const newMergeCount = merge_count + 1;
+          
+          if (newMergeCount <= merge_count) {
+            return res.status(400).json({ error: 'Merge count cannot be decreased' });
           }
-
-          // Fetch the product's price
-          const getProductPriceQuery = 'SELECT product_price FROM products WHERE product_id = ?';
-          db.query(getProductPriceQuery, [product_id], (err, productResult) => {
+          
+          db.query(updateUserMergeCountQuery, [newMergeCount, user_id], (err) => {
             if (err) {
-              console.error('Error fetching product price:', err);
+              console.error('Error updating user merge count:', err);
               return res.status(500).json({ error: 'Internal server error' });
             }
 
-            if (productResult.length === 0) {
-              return res.status(400).json({ error: 'Product not found' });
-            }
-
-            const productPrice = productResult[0].product_price;
-
             // No need to update the user's balance since it's not debited
-            res.status(200).json({ message: 'Product assigned successfully' });
+            res.status(200).json({ message: 'Product assigned for Merged successfully' });
           });
         });
       });
@@ -1627,15 +1721,624 @@ const set_merge_product = (req, res) => {
 
 
 
+// ###### SET FROZEN TARGET API CODE 
+
+const set_frozen_product = (req, res) => {
+  const { user_id, product_id, frozen_target } = req.body;
+
+  // Insert the merge_target into a new line in user_merge_targets
+  const insertUserFrozenTargetQuery = 'INSERT INTO user_frozen_products (user_id, product_id, frozen_target) VALUES (?, ?, ?)';
+
+  db.query(insertUserFrozenTargetQuery, [user_id, product_id, frozen_target], (err) => {
+    if (err) {
+      console.error('Error inserting user frozn target:', err);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+
+    // Fetch the user's current merge_count from the users table
+    const getUserFrozenCountQuery = 'SELECT frozen_count FROM users WHERE id = ?';
+    db.query(getUserFrozenCountQuery, [user_id], (err, userResult) => {
+      if (err) {
+        console.error('Error fetching user frozen count:', err);
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+
+      if (userResult.length === 0) {
+        return res.status(400).json({ error: 'User not found' });
+      }
+
+      const frozen_count = userResult[0].frozen_count;
+
+      // Fetch the max merge limit for the merge_target
+      const checkFrozenLimitQuery = 'SELECT max_limit FROM user_frozen_products WHERE user_id = ? AND frozen_target = ?';
+      db.query(checkFrozenLimitQuery, [user_id, frozen_target], (err, frozenLimitResult) => {
+        if (err) {
+          console.error('Error fetching frozen limit data:', err);
+          return res.status(500).json({ error: 'Internal server error' });
+        }
+
+        if (frozenLimitResult.length === 0) {
+          return res.status(400).json({ error: 'User frozen target not found' });
+        }
+
+        const  max_frozen_limit  = frozenLimitResult[0].max_limit;
+
+        
+
+        // Check if the merge count is greater than or equal to the max merge limit
+        if (frozen_count >= max_frozen_limit ) {
+          return res.status(400).json({ error: `Maximum Frozen limit reached for the user ${user_id}` });
+        }
+
+        // Fetch the product's price
+        const getProductPriceQuery = 'SELECT product_price FROM products WHERE product_id = ?';
+        db.query(getProductPriceQuery, [product_id], (err, productResult) => {
+          if (err) {
+            console.error('Error fetching product price:', err);
+            return res.status(500).json({ error: 'Internal server error' });
+          }
+
+          if (productResult.length === 0) {
+            return res.status(400).json({ error: 'Product not found' });
+          }
+
+          const productPrice = productResult[0].product_price;
+
+          // Update the user's merge_count in the users table
+          const updateUserFrozenCountQuery = 'UPDATE users SET frozen_count = ? WHERE id = ?';
+          const newFrozenCount = frozen_count + 1;
+          
+          if (newFrozenCount <= frozen_count) {
+            return res.status(400).json({ error: 'frozen count cannot be decreased' });
+          }
+          
+          db.query(updateUserFrozenCountQuery, [newFrozenCount, user_id], (err) => {
+            if (err) {
+              console.error('Error updating user frozen count:', err);
+              return res.status(500).json({ error: 'Internal server error' });
+            }
+
+            // No need to update the user's balance since it's not debited
+            res.status(200).json({ message: 'Product assigned for Frozen successfully' });
+          });
+        });
+      });
+    });
+  });
+};
 
 
 
+//####### RESET FORGOT PASSWORD ##########
+
+
+
+
+// Controller function to reset a user's password
+const reset_forgot_password = (req, res) => {
+  const { userId, newPassword, confirmNewPassword } = req.body;
+
+  // Check if the newPassword and confirmNewPassword match
+  if (newPassword !== confirmNewPassword) {
+    return res.status(400).json({ error: 'New password and confirm password do not match' });
+  }
+
+  // Hash the new password before storing it in the database
+  bcrypt.hash(newPassword, 10, (hashError, hashedPassword) => {
+    if (hashError) {
+      // console.error(hashError);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+
+    // Check if the user exists
+    db.query('SELECT * FROM users WHERE id = ?', [userId], (userQueryError, userRows) => {
+      if (userQueryError) {
+        // console.error(userQueryError);
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+
+      if (userRows.length === 0) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      // Update the user's password
+      db.query('UPDATE users SET login_password = ? WHERE id = ?', [hashedPassword, userId], (updateError) => {
+        if (updateError) {
+          // console.error(updateError);
+          return res.status(500).json({ error: 'Internal server error',updateError });
+        }
+
+        res.status(200).json({ message: 'Password changed successfully' });
+      });
+    });
+  });
+};
+
+
+
+
+// ##### GET ALL WITHDRAWLS REQUESTS
+
+
+
+const get_all_withdrawals_requests = (req, res) => {
+  try {
+    // Fetch all withdrawal records from the database
+   const getAllWithdrawalsQuery = `
+    SELECT withdraw_requests.id, 
+           withdraw_requests.user_id, 
+           users.username, 
+           users.balance, 
+           withdraw_requests.amount, 
+           withdraw_requests.status
+    FROM withdraw_requests
+    INNER JOIN users ON withdraw_requests.user_id = users.id`;
+
+    db.query(getAllWithdrawalsQuery, (error, result) => {
+      if (error) {
+        console.error(error);
+        res.status(500).json({ error: 'An error occurred while fetching withdrawal history.' });
+      } else {
+        // Return the list of withdrawal records
+        res.status(200).json({ withdrawals: result });
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'An error occurred' });
+  }
+};
+
+
+
+
+
+// ##### Update the DEPOSIT REQUEST< APPROVE OR CANCEL
+
+
+// const complete_withdrawal_request = (req, res) => {
+//   try {
+//     const requestId = req.params.requestId;
+//     const withdrawnAmount = req.body.withdrawnAmount;
+//     const action = req.body.action; // Add an 'action' field in the request to specify approve or reject
+
+//     // Check if withdrawnAmount is <= 0
+//     if (withdrawnAmount <= 0) {
+//       return res.status(400).json({ error: 'Please Enter a valid Amount to Withdraw.' });
+//     }
+
+//     // Check if the withdrawal request status is already completed
+//     const checkStatusQuery = 'SELECT status FROM withdraw_requests WHERE id = ?';
+//     db.query(checkStatusQuery, [requestId], (checkStatusError, checkStatusResult) => {
+//       if (checkStatusError) {
+//         console.error(checkStatusError);
+//         res.status(500).json({ error: 'An error occurred while checking withdrawal request status.' });
+//       } else if (checkStatusResult.length === 0) {
+//         res.status(404).json({ error: 'Withdrawal request not found.' });
+//       } else {
+//         const currentStatus = checkStatusResult[0].status;
+//         if (currentStatus === 'completed') {
+//           res.status(400).json({ error: 'This withdrawal request is already approved and completed.' });
+//         } else {
+//           // Update the status of the withdrawal request based on the action (approve or reject)
+//           const newStatus = action === 'approve' ? 'completed' : 'rejected';
+//           const updateQuery = 'UPDATE withdraw_requests SET status = ?, amount = ? WHERE id = ?';
+//           db.query(updateQuery, [newStatus, withdrawnAmount, requestId], (updateError, updateResult) => {
+//             if (updateError) {
+//               console.error(updateError);
+//               res.status(500).json({ error: 'An error occurred while updating withdrawal status and amount.' });
+//             } else if (updateResult.affectedRows === 0) {
+//               res.status(404).json({ error: 'Withdrawal request not found.' });
+//             } else if (action === 'approve') {
+//               // Deduct the withdrawn amount from the user's balance
+//               const userIdQuery = 'SELECT user_id FROM withdraw_requests WHERE id = ?';
+//               db.query(userIdQuery, [requestId], (userIdError, userIdResult) => {
+//                 if (userIdError) {
+//                   console.error(userIdError);
+//                   res.status(500).json({ error: 'An error occurred while retrieving user ID.' });
+//                 } else {
+//                   const userId = userIdResult[0].user_id;
+//                   const getUserBalanceQuery = 'SELECT balance FROM users WHERE id = ?';
+//                   db.query(getUserBalanceQuery, [userId], (balanceError, balanceResult) => {
+//                     if (balanceError) {
+//                       console.error(balanceError);
+//                       res.status(500).json({ error: 'An error occurred while retrieving user balance.' });
+//                     } else {
+//                       const currentBalance = balanceResult[0].balance;
+//                       const updatedBalance = currentBalance - withdrawnAmount;
+
+//                       // Update user balance
+//                       const updateBalanceQuery = 'UPDATE users SET balance = ? WHERE id = ?';
+//                       db.query(updateBalanceQuery, [updatedBalance, userId], (updateBalanceError) => {
+//                         if (updateBalanceError) {
+//                           console.error(updateBalanceError);
+//                           res.status(500).json({ error: 'An error occurred while updating user balance.' });
+//                         } else {
+//                           if (action === 'approve') {
+//                             // Insert a record into the withdraw_history table for approval
+//                             const insertHistoryQuery = 'INSERT INTO withdraw_history (user_id, amount, date) VALUES (?, ?, CURDATE())';
+//                             db.query(insertHistoryQuery, [userId, withdrawnAmount], (insertHistoryError, insertHistoryResult) => {
+//                               if (insertHistoryError) {
+//                                 console.error(insertHistoryError);
+//                                 res.status(500).json({ error: 'An error occurred while inserting into withdraw_history.' });
+//                               } else {
+//                                 res.status(200).json({
+//                                   message: 'Withdrawal request completed Successfully',
+//                                   updatedBalance,
+//                                 });
+//                               }
+//                             });
+//                           } else {
+//                             res.status(200).json({
+//                               message: 'Withdrawal request rejected Successfully',
+//                               updatedBalance,
+//                             });
+//                           }
+//                         }
+//                       });
+//                     }
+//                   });
+//                 }
+//               });
+//             } else {
+//               // If the action is 'reject', simply respond with a success message
+//               res.status(200).json({
+//                 message: 'Withdrawal request rejected Successfully',
+                
+//               });
+//             }
+//           });
+//         }
+//       }
+//     });
+//   } catch (error) {
+//     console.error(error);
+//     res.status(500).json({ error: 'An error occurred' });
+//   }
+// };
+
+
+
+
+
+
+
+const complete_withdrawal_request = (req, res) => {
+  try {
+    const requestId = req.params.requestId;
+    const action = req.body.action; // Add an 'action' field in the request to specify approve or reject
+
+    // Check if the withdrawal request status is already completed
+    const checkStatusQuery = 'SELECT status FROM withdraw_requests WHERE id = ?';
+    db.query(checkStatusQuery, [requestId], (checkStatusError, checkStatusResult) => {
+      if (checkStatusError) {
+        console.error(checkStatusError);
+        res.status(500).json({ error: 'An error occurred while checking withdrawal request status.' });
+      } else if (checkStatusResult.length === 0) {
+        res.status(404).json({ error: 'Withdrawal request not found.' });
+      } else {
+        const currentStatus = checkStatusResult[0].status;
+        if (currentStatus === 'completed') {
+          res.status(400).json({ error: 'This withdrawal request is already approved and completed.' });
+        } else {
+          if (action === 'approve') {
+            // User is approving the request
+            const withdrawnAmount = req.body.withdrawnAmount;
+            
+            // Check if withdrawnAmount is <= 0
+            if (withdrawnAmount <= 0) {
+              return res.status(400).json({ error: 'Please Enter a valid Amount to Withdraw.' });
+            }
+
+            // Deduct the withdrawn amount from the user's balance
+            const userIdQuery = 'SELECT user_id FROM withdraw_requests WHERE id = ?';
+            db.query(userIdQuery, [requestId], (userIdError, userIdResult) => {
+              if (userIdError) {
+                console.error(userIdError);
+                res.status(500).json({ error: 'An error occurred while retrieving user ID.' });
+              } else {
+                const userId = userIdResult[0].user_id;
+                const getUserBalanceQuery = 'SELECT balance FROM users WHERE id = ?';
+                db.query(getUserBalanceQuery, [userId], (balanceError, balanceResult) => {
+                  if (balanceError) {
+                    console.error(balanceError);
+                    res.status(500).json({ error: 'An error occurred while retrieving user balance.' });
+                  } else {
+                    const currentBalance = balanceResult[0].balance;
+                    if (currentBalance < withdrawnAmount) {
+                      res.status(400).json({ error: 'Insufficient balance for withdrawal.' });
+                    } else {
+                      const updatedBalance = currentBalance - withdrawnAmount;
+
+                      // Update user balance
+                      const updateBalanceQuery = 'UPDATE users SET balance = ? WHERE id = ?';
+                      db.query(updateBalanceQuery, [updatedBalance, userId], (updateBalanceError) => {
+                        if (updateBalanceError) {
+                          console.error(updateBalanceError);
+                          res.status(500).json({ error: 'An error occurred while updating user balance.' });
+                        } else {
+                          // Update the status of the withdrawal request to 'completed' and update the amount
+                          const newStatus = 'completed';
+                          const updateQuery = 'UPDATE withdraw_requests SET status = ?, amount = ? WHERE id = ?';
+                          db.query(updateQuery, [newStatus, withdrawnAmount, requestId], (updateError, updateResult) => {
+                            if (updateError) {
+                              console.error(updateError);
+                              res.status(500).json({ error: 'An error occurred while updating withdrawal status and amount.' });
+                            } else if (updateResult.affectedRows === 0) {
+                              res.status(404).json({ error: 'Withdrawal request not found.' });
+                            } else {
+                              // Insert a record into the withdraw_history table for approval
+                              const insertHistoryQuery = 'INSERT INTO withdraw_history (user_id, amount, date) VALUES (?, ?, CURDATE())';
+                              db.query(insertHistoryQuery, [userId, withdrawnAmount], (insertHistoryError, insertHistoryResult) => {
+                                if (insertHistoryError) {
+                                  console.error(insertHistoryError);
+                                  res.status(500).json({ error: 'An error occurred while inserting into withdraw_history.' });
+                                } else {
+                                  res.status(200).json({
+                                    message: 'Withdrawal request completed Successfully',
+                                    updatedBalance,
+                                  });
+                                }
+                              });
+                            }
+                          });
+                        }
+                      });
+                    }
+                  }
+                });
+              }
+            });
+          } else if (action === 'reject') {
+            // User is rejecting the request
+            // Update the status of the withdrawal request to 'rejected' (no need to update the amount)
+            const newStatus = 'rejected';
+            const updateQuery = 'UPDATE withdraw_requests SET status = ? WHERE id = ?';
+            db.query(updateQuery, [newStatus, requestId], (updateError, updateResult) => {
+              if (updateError) {
+                console.error(updateError);
+                res.status(500).json({ error: 'An error occurred while updating withdrawal status.' });
+              } else if (updateResult.affectedRows === 0) {
+                res.status(404).json({ error: 'Withdrawal request not found.' });
+              } else {
+                res.status(200).json({
+                  message: 'Withdrawal request rejected Successfully',
+                });
+              }
+            });
+          } else {
+            res.status(400).json({ error: 'Invalid action. Please specify "approve" or "reject".' });
+          }
+        }
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'An error occurred' });
+  }
+};
+
+
+
+// ####### WITHDRAW HISTORY API CODE
+
+
+const get_withdraw_history_by_admin = (req, res) => {
+  try {
+    const userId = req.params.userId;
+
+    // Query the database to retrieve withdrawal history for the specified user
+    // const historyQuery = 'SELECT * FROM withdraw_history WHERE user_id = ?';
+    const historyQuery = 'SELECT wh.*, u.username FROM withdraw_history wh ' +
+                   'JOIN users u ON wh.user_id = u.id ' +
+                   'WHERE wh.user_id = ?';
+
+    db.query(historyQuery, [userId], (historyError, historyResult) => {
+      if (historyError) {
+        console.error(historyError);
+        res.status(500).json({ error: 'An error occurred while retrieving withdrawal history.' });
+      } else {
+        res.status(200).json({ withdrawalHistory: historyResult });
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'An error occurred' });
+  }
+};
+
   
   
+// $$$$###### EDIT WALLET ADDRESS BY ADMIN
+
+
+const edit_wallet_by_admin = async (req, res) => {
+  try {
+    const { user_id, full_name, crypto_exchange_platform, usdt_trc20_address, phone } = req.body;
+
+    
+
+    // Check if any of the required fields are missing
+    if (!full_name || !crypto_exchange_platform || !usdt_trc20_address || !phone) {
+      return res.status(400).json({ error: 'All fields are required.' });
+    }
+
+    // Check if the user already has a bound wallet
+    const existingWalletQuery = 'SELECT * FROM bind_wallet WHERE user_id = ?';
+    db.query(existingWalletQuery, [user_id], (existingWalletError, existingWalletResult) => {
+      if (existingWalletError) {
+        console.error(existingWalletError);
+        return res.status(500).json({ error: 'An error occurred while checking existing wallet.' });
+      }
+
+      if (existingWalletResult.length === 0) {
+        return res.status(404).json({ error: 'No wallet found for this user.' });
+      }
+
+      // Update wallet details in the bind_wallet table
+      const updateWalletQuery = 'UPDATE bind_wallet SET full_name=?, crypto_exchange_platform=?, usdt_trc20_address=?, phone=? WHERE user_id = ?';
+      db.query(
+        updateWalletQuery,
+        [full_name, crypto_exchange_platform, usdt_trc20_address, phone, user_id],
+        (updateError, updateResult) => {
+          if (updateError) {
+            console.error(updateError);
+            res.status(500).json({ error: 'An error occurred while updating the wallet.' });
+          } else {
+            res.status(200).json({ message: 'Wallet successfully updated!' });
+          }
+        }
+      );
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'An error occurred.' });
+  }
+};
+
   
   
+// ###### GET WALLET BY ADMIN API CODE ############
+
+
+const get_wallet_by_admin = async (req, res) => {
+  try {
+    const user_id = req.params.userId; 
+
+    
+    // Query the database to retrieve wallet information for the user
+    const query = 'SELECT * FROM bind_wallet WHERE user_id = ?';
+    db.query(query, [user_id], (error, results) => {
+      if (error) {
+        console.error(error);
+        res.status(500).json({ error: 'An error occurred' });
+      } else {
+        res.status(200).json({ walletData: results });
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'An error occurred' });
+  }
+};
+
+
+// ###### GET ALL LEVELS BY ADMIN API CODE ############
+
+
+const get_levels_by_admin = async (req, res) => {
+  try {
+    
+    
+    // Query the database to retrieve level information 
+    const query = 'SELECT * FROM levels';
+    db.query(query, (error, results) => {
+      if (error) {
+        console.error(error);
+        res.status(500).json({ error: 'An error occurred' });
+      } else {
+        res.status(200).json({ levels: results });
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'An error occurred' });
+  }
+};
   
   
+
+
+// @@$$$$$#### UPDATE LEVEL OF USER
+
+const update_user_level_by_admin = async (req, res) => {
+  try {
+    const { userId, levelId } = req.body;
+
+    // Validate if user and level IDs are provided
+    if (!userId || !levelId) {
+      return res.status(400).json({ error: 'Both user ID and level ID are required.' });
+    }
+
+    // Check if the user with the provided user ID exists
+    const checkUserQuery = 'SELECT * FROM users WHERE id = ?';
+    db.query(checkUserQuery, [userId], (checkUserError, checkUserResults) => {
+      if (checkUserError) {
+        console.error(checkUserError);
+        return res.status(500).json({ error: 'An error occurred while checking the user.' });
+      }
+
+      if (checkUserResults.length === 0) {
+        return res.status(404).json({ error: 'User not found.' });
+      }
+
+      // Check if the level with the provided level ID exists
+      const checkLevelQuery = 'SELECT * FROM levels WHERE level_id = ?';
+      db.query(checkLevelQuery, [levelId], (checkLevelError, checkLevelResults) => {
+        if (checkLevelError) {
+          console.error(checkLevelError);
+          return res.status(500).json({ error: 'An error occurred while checking the level.' });
+        }
+
+        if (checkLevelResults.length === 0) {
+          return res.status(404).json({ error: 'Level not found.' });
+        }
+
+        // Update the user's level in the database
+        const updateLevelQuery = 'UPDATE users SET level_id = ? WHERE id = ?';
+        db.query(updateLevelQuery, [levelId, userId], (updateLevelError, updateLevelResults) => {
+          if (updateLevelError) {
+            console.error(updateLevelError);
+            return res.status(500).json({ error: 'An error occurred while updating the user level.' });
+          }
+
+          // Query the updated user's level
+          const getUserLevelQuery = 'SELECT level_name FROM levels WHERE level_id = ?';
+          db.query(getUserLevelQuery, [levelId], (getUserLevelError, getUserLevelResults) => {
+            if (getUserLevelError) {
+              console.error(getUserLevelError);
+              return res.status(500).json({ error: 'An error occurred while fetching the updated user level.' });
+            }
+
+            const updatedLevel = getUserLevelResults[0].level_name;
+            
+            // Include the updated user's level in the response
+            res.status(200).json({ message: 'User level updated successfully.', updatedLevel });
+          });
+        });
+      });
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'An error occurred.' });
+  }
+};
+
+
+
+
+// $##### ADMIN LOGOUT API
+
+
+const admin_logout = (req, res) => {
+  try {
+    // Clear the admin_token cookie to log out the admin
+    res.clearCookie("admin_token");
+
+    res.status(200).json({ message: "Admin logout successful" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Admin logout failed" });
+  }
+};
+
+
+
+
+
+
+
+
 
 
   
@@ -1645,6 +2348,7 @@ module.exports = {
     get_deposit_requests,
     get_single_deposit_request,
     complete_deposit_request,
+    deposit_direct,
     fetch_deposit_history_by_admin,
     block_the_user_account,
     activate_the_user_account,
@@ -1653,6 +2357,7 @@ module.exports = {
     add_events,
     get_all_events,
     edit_event,
+    get_single_event,
     delete_event,
     add_data_sets,
     add_product,
@@ -1662,9 +2367,18 @@ module.exports = {
     delete_product,
     reset_user_account,
     set_merge_product,
+    set_frozen_product,
+    reset_forgot_password,
+    get_all_withdrawals_requests,
+    complete_withdrawal_request,
+    get_withdraw_history_by_admin,
+    edit_wallet_by_admin,
+    get_wallet_by_admin,
+    get_levels_by_admin,
+    update_user_level_by_admin,
+    admin_logout
     
-    
-    
+  
    
   };
   

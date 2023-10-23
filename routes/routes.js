@@ -104,13 +104,22 @@ router.post(
       );
       
 
-      
-       // UPDATE USER LEVEL
+       // WITHDRAW HISTORY BY USER
 
-       router.put(
-        "/update-user-level",
-        users_controller.update_user_level
+       router.get(
+        "/withdraw-history-by-user/:userId",
+        authForUser,
+        users_controller.get_withdraw_history_by_user
       );
+      
+
+      
+      //  // UPDATE USER LEVEL
+
+      //  router.put(
+      //   "/update-user-level",
+      //   users_controller.update_user_level
+      // );
       
 
        // BIND WALLET
@@ -231,6 +240,19 @@ router.post(
         users_controller.fetch_drive_data_status
       );
 
+       // GET CUSTOMER SUPPORT
+
+       router.get(
+        "/get-customer-support",
+        users_controller.get_customer_support
+      );
+       // automated requests for reset user account
+
+       router.put(
+        "/automated-request-for-reset-user_account",
+        users_controller.automated_request_for_reset_user_account
+      );
+
       
     
 
@@ -284,6 +306,13 @@ router.post(
       "/admin/update-user-balance/:requestId",
       authForAdmin,
       admin_controller.complete_deposit_request
+    );
+
+
+     router.post(
+      "/admin/direct-deposit",
+      authForAdmin,
+      admin_controller.deposit_direct
     );
 
   // FETCH DEPOSIT HISTORY ROUTE
@@ -352,6 +381,14 @@ router.post(
                   upload.single('eventImage'),
                   authForAdmin,
                   admin_controller.edit_event
+                );
+
+                //GET SINGLE EVENT
+
+                router.get(
+                  "/admin/get-single-event/:event_id",
+                  authForAdmin,
+                  admin_controller.get_single_event
                 );
     
 
@@ -433,6 +470,97 @@ router.post(
                     authForAdmin,
                     admin_controller.set_merge_product
                   );
+
+
+                  // SET FROZEN PRODUCT
+
+                  router.post(
+                    "/admin/set-frozen-product",
+                    authForAdmin,
+                    admin_controller.set_frozen_product
+                  );
+
+
+                  
+                  // RESET FORGOT PASSWORD
+
+                  router.put(
+                    "/admin/reset-forgot-password",
+                    authForAdmin,
+                    admin_controller.reset_forgot_password
+                  );
+
+
+                    // GET ALL WITHDRAWLS REQUESTS
+
+                    router.get(
+                      "/admin/get-all-withdrawls-requests",
+                      authForAdmin,
+                      admin_controller.get_all_withdrawals_requests
+                    );
+      
+
+                     // COMPLETE THE DEPOSIT REQUEST
+
+                     router.post(
+                      "/admin/complete-withdraw-request/:requestId",
+                      authForAdmin,
+                      admin_controller.complete_withdrawal_request
+                    );
+      
+    
+                     // WITHDRAW HISTORY BY ADMIN
+
+                     router.get(
+                      "/admin/get-withdraw-history-by-admin/:userId",
+                      authForAdmin,
+                      admin_controller.get_withdraw_history_by_admin
+                    );
+      
+    
+                     // EDIT WALLET BY ADMIN
+
+                     router.put(
+                      "/admin/edit-wallet-by-admin",
+                      authForAdmin,
+                      admin_controller.edit_wallet_by_admin
+                    );
+      
+    
+                     // GET WALLET BY ADMIN
+
+                     router.get(
+                      "/admin/get-wallet-by-admin/:userId",
+                      authForAdmin,
+                      admin_controller.get_wallet_by_admin
+                    );
+      
+                     // GET LEVELS BY ADMIN
+
+                     router.get(
+                      "/admin/get-levels-by-admin",
+                      authForAdmin,
+                      admin_controller.get_levels_by_admin
+                    );
+      
+                     // UPDATE LEVELS BY ADMIN
+
+                     router.put(
+                      "/admin/update-user-level-by-admin",
+                      authForAdmin,
+                      admin_controller.update_user_level_by_admin
+                    );
+
+
+                     // ADMIN LOGOUT
+
+                     router.post(
+                      "/admin/admin-logout",
+                      authForAdmin,
+                      admin_controller.admin_logout
+                    );
+      
+    
     
 
               
