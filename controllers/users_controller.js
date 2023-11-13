@@ -1992,20 +1992,20 @@ const drive_data = async (req, res) => {
 
   try {
 
-  //   // Define the operating hours (10:00 - 23:00) as time objects
-  // const openingTime = new Date();
-  // openingTime.setHours(10, 0, 0, 0);
+    // Define the operating hours (10:00 - 23:00) as time objects
+  const openingTime = new Date();
+  openingTime.setHours(10, 0, 0, 0);
 
-  // const closingTime = new Date();
-  // closingTime.setHours(23, 0, 0, 0);
+  const closingTime = new Date();
+  closingTime.setHours(23, 0, 0, 0);
 
-  // // Get the current time
-  // const currentTime = new Date();
+  // Get the current time
+  const currentTime = new Date();
 
-  // // Check if the current time is within the operating hours
-  // if (currentTime < openingTime || currentTime > closingTime) {
-  //   return res.status(400).json({ error: "Opening hours 10:00:00 - 22:59:59" });
-  // }
+  // Check if the current time is within the operating hours
+  if (currentTime < openingTime || currentTime > closingTime) {
+    return res.status(400).json({ error: "Opening hours 10:00:00 - 22:59:59" });
+  }
     // Check if there are any pending statuses for the user's products
     const checkStatusSql =
       'SELECT COUNT(*) AS pending_count FROM user_products WHERE user_id = ? AND status = "pending"';
