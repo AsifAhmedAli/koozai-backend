@@ -307,6 +307,11 @@ router.post(
       authForAdmin,
       admin_controller.complete_deposit_request
     );
+     router.put(
+      "/admin/reject-deposit-request/:requestId",
+      authForAdmin,
+      admin_controller.reject_deposit_request
+    );
 
 
      router.post(

@@ -1993,19 +1993,19 @@ const drive_data = async (req, res) => {
   try {
 
   //   // Define the operating hours (10:00 - 23:00) as time objects
-  const openingTime = new Date();
-  openingTime.setHours(10, 0, 0, 0);
+  // const openingTime = new Date();
+  // openingTime.setHours(10, 0, 0, 0);
 
-  const closingTime = new Date();
-  closingTime.setHours(23, 0, 0, 0);
+  // const closingTime = new Date();
+  // closingTime.setHours(23, 0, 0, 0);
 
-  // Get the current time
-  const currentTime = new Date();
+  // // Get the current time
+  // const currentTime = new Date();
 
-  // Check if the current time is within the operating hours
-  if (currentTime < openingTime || currentTime > closingTime) {
-    return res.status(400).json({ error: "Opening hours 10:00:00 - 22:59:59" });
-  }
+  // // Check if the current time is within the operating hours
+  // if (currentTime < openingTime || currentTime > closingTime) {
+  //   return res.status(400).json({ error: "Opening hours 10:00:00 - 22:59:59" });
+  // }
     // Check if there are any pending statuses for the user's products
     const checkStatusSql =
       'SELECT COUNT(*) AS pending_count FROM user_products WHERE user_id = ? AND status = "pending"';
@@ -2086,6 +2086,8 @@ const drive_data = async (req, res) => {
 
               totalLimit = userLevel.max_data_limit;
 
+           
+
               // Fetch frozen_target from user_frozen_products
               const fetchFrozenTargetSql =
                 "SELECT frozen_target FROM user_frozen_products WHERE user_id = ?";
@@ -2125,7 +2127,7 @@ const drive_data = async (req, res) => {
                           // Start a new set
                           // Update user's sets completed today count
                           const updatedSetsCompletedToday =
-                            userDetails.sets_completed_today + 1;
+                            userDetails.sets_completed_today;
 
                           // Reset user's data completed count
                           const updatedDataCompleted = 0;
@@ -2195,11 +2197,12 @@ const drive_data = async (req, res) => {
 const assignData = (user_id, userDetails, userLevel, totalLimit, frozen_target, merge_target, res) => {
   const driveData = userDetails.data_completed + 1;
   const remainingLimit = totalLimit - userDetails.data_completed;
+  
   const updatedSetsCompletedToday =
-    userDetails.data_completed >= totalLimit
+    userDetails.data_completed + 1 >= totalLimit
       ? userDetails.sets_completed_today + 1
       : userDetails.sets_completed_today;
-
+     
   // Check if driveData is equal to frozen_target
   if (driveData === frozen_target) {
     // Fetch a product from user_frozen_products
@@ -2482,7 +2485,7 @@ const assignData = (user_id, userDetails, userLevel, totalLimit, frozen_target, 
         }
 
         // Calculate driveData based on the updated data_completed count
-        const driveData = userDetails.data_completed ;
+        const driveData = userDetails.data_completed + 1;
         const updatedBalance = userDetails.balance - selectedProduct.product_price;
 
         // Update user's balance

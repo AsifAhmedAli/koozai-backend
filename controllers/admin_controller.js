@@ -395,6 +395,73 @@ const complete_deposit_request = (req, res) => {
   };
 
 
+//  #### REJECT DEPOSIT REQUEST######
+const reject_deposit_request = (req, res) => {
+  try {
+    const requestId = req.params.requestId;
+
+    // Check if the deposit request status is already completed
+    const checkStatusQuery = 'SELECT status FROM deposit_requests WHERE id = ?';
+    db.query(checkStatusQuery, [requestId], (checkStatusError, checkStatusResult) => {
+      if (checkStatusError) {
+        console.error(checkStatusError);
+        res.status(500).json({ error: 'An error occurred while checking deposit request status.' });
+      } else if (checkStatusResult.length === 0) {
+        res.status(404).json({ error: 'Deposit request not found.' });
+      } else {
+        const currentStatus = checkStatusResult[0].status;
+        if (currentStatus === 'completed') {
+          res.status(400).json({ error: 'This deposit request is already approved and completed.' });
+        } else if (currentStatus === 'rejected') {
+          res.status(400).json({ error: 'This deposit request is already rejected.' });
+        } else {
+          // Update the status of the deposit request to 'rejected'
+          const updateQuery = 'UPDATE deposit_requests SET status = ? WHERE id = ?';
+          db.query(updateQuery, ['rejected', requestId], (updateError, updateResult) => {
+            if (updateError) {
+              console.error(updateError);
+              res.status(500).json({ error: 'An error occurred while updating deposit status.' });
+            } else if (updateResult.affectedRows === 0) {
+              res.status(404).json({ error: 'Deposit request not found.' });
+            } else {
+              // Add notification to the notifications table
+              const userIdQuery = 'SELECT user_id FROM deposit_requests WHERE id = ?';
+              db.query(userIdQuery, [requestId], (userIdError, userIdResult) => {
+                if (userIdError) {
+                  console.error(userIdError);
+                  res.status(500).json({ error: 'An error occurred while retrieving user ID.' });
+                } else {
+                  const userId = userIdResult[0].user_id;
+                  const timestamp = new Date();
+                  const notificationMessage = `Your deposit request has been rejected.`;
+
+                  const addNotificationQuery = 'INSERT INTO notifications (user_id, message, is_read, created_at) VALUES (?, ?, ?, ?)';
+                  db.query(addNotificationQuery, [userId, notificationMessage, 0, timestamp], (notificationError) => {
+                    if (notificationError) {
+                      console.error(notificationError);
+                      res.status(500).json({ error: 'An error occurred while adding notification.' });
+                    } else {
+                      res.status(200).json({
+                        message: 'Deposit request rejected successfully'
+                      });
+                    }
+                  });
+                }
+              });
+            }
+          });
+        }
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'An error occurred' });
+  }
+};
+
+  
+  
+  
 
   // ##### DIRECT DEPOSIT TO USER ACCOUNT WITHOUT ANY REQUEST 
 
@@ -1166,7 +1233,7 @@ const add_data_sets = (req, res) => {
 
 
 const add_product = async (req, res) => {
-  const { product_name, product_description, product_price } = req.body;
+  const { product_name,  product_price } = req.body;
   const product_image = req.file;
 
 
@@ -1185,18 +1252,18 @@ const add_product = async (req, res) => {
 
     // Insert product into the database without data_set_id
     const insertQuery = `
-      INSERT INTO products (id,product_name, product_description, product_price, product_image_url)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO products (id,product_name,  product_price, product_image_url)
+      VALUES (?, ?, ?, ?)
     `;
 
     await new Promise((resolve, reject) => {
       db.query(
         insertQuery,
-        [generatedId, product_name, product_description, product_price, product_image_url],
+        [generatedId, product_name, product_price, product_image_url],
         (err, result) => {
           if (err) {
             console.error(err);
-            return reject('Internal server error');
+            return reject('Internal server errorr');
           }
 
           resolve(result);
@@ -1206,7 +1273,7 @@ const add_product = async (req, res) => {
 
     res.status(201).json({ message: 'Product added successfully.' });
   } catch (error) {
-    // console.error(error);
+    console.error(error);
     res.status(500).json({ error: 'Internal server error' });
   }
 };
@@ -1229,7 +1296,6 @@ const add_product = async (req, res) => {
           return {
             product_id: product.product_id,
             product_name: product.product_name,
-            product_description: product.product_description,
             product_price: product.product_price,
             product_image_url: product.product_image_url
           };
@@ -1286,7 +1352,7 @@ const add_product = async (req, res) => {
   const edit_product = async (req, res) => {
     try {
       const product_id = req.params.product_id;
-      const { product_name, product_description, product_price } = req.body;
+      const { product_name, product_price } = req.body;
       const product_image = req.file;
   
      
@@ -1350,14 +1416,14 @@ const add_product = async (req, res) => {
       // Update product in the database
       const updateQuery = `
         UPDATE products
-        SET product_name = ?, product_description = ?, product_price = ?, product_image_url = ?
+        SET product_name = ?, product_price = ?, product_image_url = ?
         WHERE product_id = ?
       `;
   
       await new Promise((resolve, reject) => {
         db.query(
           updateQuery,
-          [product_name, product_description, product_price, product_image_url, product_id],
+          [product_name, product_price, product_image_url, product_id],
           (err, result) => {
             if (err) {
               console.error('Error updating product:', err);
@@ -2348,6 +2414,7 @@ module.exports = {
     get_deposit_requests,
     get_single_deposit_request,
     complete_deposit_request,
+    reject_deposit_request,
     deposit_direct,
     fetch_deposit_history_by_admin,
     block_the_user_account,
