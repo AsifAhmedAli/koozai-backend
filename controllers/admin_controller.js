@@ -1591,11 +1591,88 @@ const add_product = async (req, res) => {
   
 // Define an endpoint for resetting a user's account
 
+// const reset_user_account = (req, res) => {
+//   const { user_id } = req.body;
+
+//   // Update user's data_completed and sets_completed_today to reset their account
+//   const resetAccountSql = 'UPDATE users SET data_completed = 0, merge_count = 0, frozen_count = 0 WHERE id = ?';
+
+//   // Update user_frozen_products table
+//   const resetFrozenProductsSql = 'DELETE FROM user_frozen_products WHERE user_id = ?';
+
+//   // Update user_merged_products table
+//   const resetMergedProductsSql = 'DELETE FROM user_merged_products WHERE user_id = ?';
+
+//   db.beginTransaction((err) => {
+//     if (err) {
+//       console.error('Error starting a transaction: ' + err.message);
+//       return res.status(500).json({ error: 'Internal server error' });
+//     }
+
+//     // Reset user account in the 'users' table
+//     db.query(resetAccountSql, [user_id], (err, result) => {
+//       if (err) {
+//         db.rollback(() => {
+//           console.error('Error resetting user account: ' + err.message);
+//           return res.status(500).json({ error: 'Internal server error' });
+//         });
+//       }
+
+//       // Check if any rows were affected (i.e., if the user ID was valid)
+//       if (result.affectedRows === 0) {
+//         db.rollback(() => {
+//           return res.status(404).json({ error: 'User not found' });
+//         });
+//       }
+
+//       // Reset user_frozen_products table
+//       db.query(resetFrozenProductsSql, [user_id], (err) => {
+//         if (err) {
+//           db.rollback(() => {
+//             console.error('Error resetting user_frozen_products table: ' + err.message);
+//             return res.status(500).json({ error: 'Internal server error' });
+//           });
+//         }
+
+//         // Reset user_merged_products table
+//         db.query(resetMergedProductsSql, [user_id], (err) => {
+//           if (err) {
+//             db.rollback(() => {
+//               console.error('Error resetting user_merged_products table: ' + err.message);
+//               return res.status(500).json({ error: 'Internal server error' });
+//             });
+//           }
+
+//           // Commit the transaction
+//           db.commit((err) => {
+//             if (err) {
+//               db.rollback(() => {
+//                 console.error('Error committing transaction: ' + err.message);
+//                 return res.status(500).json({ error: 'Internal server error' });
+//               });
+//             }
+
+//             // Account successfully reset
+//             return res.status(200).json({ message: 'User account reset successfully' });
+//           });
+//         });
+//       });
+//     });
+//   });
+// };
+
+
+
+
 const reset_user_account = (req, res) => {
   const { user_id } = req.body;
 
   // Update user's data_completed and sets_completed_today to reset their account
-  const resetAccountSql = 'UPDATE users SET data_completed = 0, merge_count = 0, frozen_count = 0 WHERE id = ?';
+  const resetAccountSql = 'UPDATE users SET data_completed = 0, merge_count = 0, frozen_count = 0' +
+                          ' WHERE id = ? ';
+
+  // Update commission to 0 if sets_completed_today is 2
+  const updateCommissionSql = 'UPDATE users SET commission = 0 WHERE id = ? AND sets_completed_today = 2';
 
   // Update user_frozen_products table
   const resetFrozenProductsSql = 'DELETE FROM user_frozen_products WHERE user_id = ?';
@@ -1609,7 +1686,7 @@ const reset_user_account = (req, res) => {
       return res.status(500).json({ error: 'Internal server error' });
     }
 
-    // Reset user account in the 'users' table
+    // Reset user account in the 'users' table (excluding sets_completed_today = 2)
     db.query(resetAccountSql, [user_id], (err, result) => {
       if (err) {
         db.rollback(() => {
@@ -1618,42 +1695,52 @@ const reset_user_account = (req, res) => {
         });
       }
 
-      // Check if any rows were affected (i.e., if the user ID was valid)
+      // Check if any rows were affected (i.e., if the user ID was valid and sets_completed_today is not 2)
       if (result.affectedRows === 0) {
         db.rollback(() => {
-          return res.status(404).json({ error: 'User not found' });
+          return res.status(404).json({ error: 'User not found or sets_completed_today is 2' });
         });
       }
 
-      // Reset user_frozen_products table
-      db.query(resetFrozenProductsSql, [user_id], (err) => {
+      // Update commission to 0 if sets_completed_today is 2
+      db.query(updateCommissionSql, [user_id], (err) => {
         if (err) {
           db.rollback(() => {
-            console.error('Error resetting user_frozen_products table: ' + err.message);
+            console.error('Error updating commission: ' + err.message);
             return res.status(500).json({ error: 'Internal server error' });
           });
         }
 
-        // Reset user_merged_products table
-        db.query(resetMergedProductsSql, [user_id], (err) => {
+        // Reset user_frozen_products table
+        db.query(resetFrozenProductsSql, [user_id], (err) => {
           if (err) {
             db.rollback(() => {
-              console.error('Error resetting user_merged_products table: ' + err.message);
+              console.error('Error resetting user_frozen_products table: ' + err.message);
               return res.status(500).json({ error: 'Internal server error' });
             });
           }
 
-          // Commit the transaction
-          db.commit((err) => {
+          // Reset user_merged_products table
+          db.query(resetMergedProductsSql, [user_id], (err) => {
             if (err) {
               db.rollback(() => {
-                console.error('Error committing transaction: ' + err.message);
+                console.error('Error resetting user_merged_products table: ' + err.message);
                 return res.status(500).json({ error: 'Internal server error' });
               });
             }
 
-            // Account successfully reset
-            return res.status(200).json({ message: 'User account reset successfully' });
+            // Commit the transaction
+            db.commit((err) => {
+              if (err) {
+                db.rollback(() => {
+                  console.error('Error committing transaction: ' + err.message);
+                  return res.status(500).json({ error: 'Internal server error' });
+                });
+              }
+
+              // Account successfully reset
+              return res.status(200).json({ message: 'User account reset successfully' });
+            });
           });
         });
       });
