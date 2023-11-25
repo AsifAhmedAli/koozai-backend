@@ -2,6 +2,8 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const db = require("../DB/db.js"); // Database connection
 const crypto = require("crypto");
+const requestIp = require('request-ip');
+const moment = require('moment');
 const cloudinary = require("cloudinary").v2;
 const multer = require("multer");
 const cron = require("node-cron");
@@ -595,212 +597,235 @@ cloudinary.config({
 //   }
 // };
 
-const user_signup = async (req, res) => {
-  const generateReferralCode = () => {
-    const codeLength = 6;
-    const randomBytes = crypto.randomBytes(codeLength);
-    const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    let code = "";
+  const user_signup = async (req, res) => {
+    const generateReferralCode = () => {
+      const codeLength = 6;
+      const randomBytes = crypto.randomBytes(codeLength);
+      const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+      let code = "";
 
-    for (let i = 0; i < codeLength; i++) {
-      const randomIndex = randomBytes[i] % characters.length;
-      code += characters.charAt(randomIndex);
-    }
+      for (let i = 0; i < codeLength; i++) {
+        const randomIndex = randomBytes[i] % characters.length;
+        code += characters.charAt(randomIndex);
+      }
 
-    return code;
-  };
+      return code;
+    };
 
-  try {
-    const {
-      username,
-      phone,
-      password,
-      withdraw_password,
-      gender,
-      invitation_code,
-      agreedToTerms,
-    } = req.body;
+    try {
+      const {
+        username,
+        phone,
+        password,
+        withdraw_password,
+        gender,
+        invitation_code,
+        agreedToTerms,
+      } = req.body;
 
-    // Check if the user agreed to terms and conditions
-    if (!agreedToTerms) {
-      return res
-        .status(400)
-        .json({ error: "You must agree to the terms and conditions" });
-    }
+      const clientIp = req.clientIp; 
+      
+      // Check if the user agreed to terms and conditions
+      if (!agreedToTerms) {
+        return res
+          .status(400)
+          .json({ error: "You must agree to the terms and conditions" });
+      }
 
-    const saltRounds = 10;
-    const hashedLoginPassword = await bcrypt.hash(password, saltRounds);
-    const hashedWithdrawPassword = await bcrypt.hash(
-      withdraw_password,
-      saltRounds
-    );
-    const referralCode = generateReferralCode();
+      const saltRounds = 10;
+      const hashedLoginPassword = await bcrypt.hash(password, saltRounds);
+      const hashedWithdrawPassword = await bcrypt.hash(
+        withdraw_password,
+        saltRounds
+      );
+      const referralCode = generateReferralCode();
 
-    // Check if the phone number already exists
-    const sqlCheckPhone = `
-        SELECT id FROM users WHERE phone = ?
-      `;
-
-    db.query(
-      sqlCheckPhone,
-      [phone],
-      async (checkPhoneError, checkPhoneResult) => {
-        if (checkPhoneError) {
-          console.error(checkPhoneError);
-          return res.status(500).json({ error: "Signup failed" });
-        }
-
-        if (checkPhoneResult.length > 0) {
-          return res.status(400).json({ error: "Phone number already exists" });
-        }
-
-        // Continue with the rest of the code if phone number is unique
-
-        // Check if the username already exists
-        const sqlCheckUsername = `
-          SELECT id FROM users WHERE username = ?
+      // Check if the phone number already exists
+      const sqlCheckPhone = `
+          SELECT id FROM users WHERE phone = ?
         `;
 
-        db.query(
-          sqlCheckUsername,
-          [username],
-          async (checkUsernameError, checkUsernameResult) => {
-            if (checkUsernameError) {
-              console.error(checkUsernameError);
-              return res.status(500).json({ error: "Signup failed" });
-            }
+      db.query(
+        sqlCheckPhone,
+        [phone],
+        async (checkPhoneError, checkPhoneResult) => {
+          if (checkPhoneError) {
+            console.error(checkPhoneError);
+            return res.status(500).json({ error: "Signup failed" });
+          }
 
-            if (checkUsernameResult.length > 0) {
-              return res.status(400).json({ error: "Username already exists" });
-            }
+          if (checkPhoneResult.length > 0) {
+            return res.status(400).json({ error: "Phone number already exists" });
+          }
 
-            // Validate and retrieve the user_id associated with the referral code
-            const sqlValidateInvitationCode = `
-              SELECT user_id FROM referral_codes WHERE code = ?
+          // Continue with the rest of the code if phone number is unique
+
+          // Check if the username already exists
+          const sqlCheckUsername = `
+            SELECT id FROM users WHERE username = ?
+          `;
+
+          db.query(
+            sqlCheckUsername,
+            [username],
+            async (checkUsernameError, checkUsernameResult) => {
+              if (checkUsernameError) {
+                console.error(checkUsernameError);
+                return res.status(500).json({ error: "Signup failed" });
+              }
+
+              if (checkUsernameResult.length > 0) {
+                return res.status(400).json({ error: "Username already exists" });
+              }
+
+              // Validate and retrieve the user_id associated with the referral code
+              // const sqlValidateInvitationCode = `
+              //   SELECT user_id FROM referral_codes WHERE code = ?
+              // `;
+
+              const sqlValidateInvitationCode = `
+              SELECT
+                u.username AS new_user_username,
+                r.user_id,
+                ru.username AS referring_user_username
+              FROM referral_codes r
+              JOIN users u ON r.user_id = u.id
+              LEFT JOIN users ru ON r.user_id = ru.id
+              WHERE r.code = ?;
             `;
 
-            db.query(
-              sqlValidateInvitationCode,
-              [invitation_code],
-              async (validateCodeError, validateCodeResult) => {
-                if (validateCodeError) {
-                  console.error(validateCodeError);
-                  return res.status(500).json({ error: "Signup failed" });
-                }
-
-                if (validateCodeResult.length === 0) {
-                  return res
-                    .status(400)
-                    .json({ error: "Invalid invitation code" });
-                }
-
-                const userId = validateCodeResult[0].user_id;
-
-                // Get the level_id for "bronze" membership level
-                const sqlGetBronzeLevelId = `
-                  SELECT level_id FROM levels WHERE level_name = 'bronze'
-                `;
-
-                db.query(sqlGetBronzeLevelId, (levelError, levelResult) => {
-                  if (levelError) {
-                    console.error(levelError);
+              db.query(
+                sqlValidateInvitationCode,
+                [invitation_code],
+                async (validateCodeError, validateCodeResult) => {
+                  if (validateCodeError) {
+                    console.error(validateCodeError);
                     return res.status(500).json({ error: "Signup failed" });
                   }
 
-                  if (levelResult.length === 0) {
+                  if (validateCodeResult.length === 0) {
                     return res
-                      .status(404)
-                      .json({ error: "Bronze level not found" });
+                      .status(400)
+                      .json({ error: "Invalid invitation code" });
                   }
 
-                  const bronzeLevelId = levelResult[0].level_id;
+                  // const userId = validateCodeResult[0].user_id;
+                  const { new_user_username, user_id, referring_user_id, referring_user_username } = validateCodeResult[0];
 
-                  // Insert the new user with the assigned membership level
-                  const sqlInsertUser = `
-                    INSERT INTO users (username, phone, login_password, withdraw_password, gender, balance, terms_accepted, level_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                  // console.log(new_user_username)
+                  
+
+                  // Get the level_id for "bronze" membership level
+                  const sqlGetBronzeLevelId = `
+                    SELECT level_id FROM levels WHERE level_name = 'bronze'
                   `;
 
-                  db.query(
-                    sqlInsertUser,
-                    [
-                      username,
-                      phone,
-                      hashedLoginPassword,
-                      hashedWithdrawPassword,
-                      gender,
-                      15.0,
-                      agreedToTerms,
-                      bronzeLevelId,
-                    ],
-                    async (userInsertError, userInsertResult) => {
-                      if (userInsertError) {
-                        console.error(userInsertError);
-                        return res.status(500).json({ error: "Signup failed" });
-                      }
+                  db.query(sqlGetBronzeLevelId, (levelError, levelResult) => {
+                    if (levelError) {
+                      console.error(levelError);
+                      return res.status(500).json({ error: "Signup failed" });
+                    }
 
-                      const userInsertId = userInsertResult.insertId;
+                    if (levelResult.length === 0) {
+                      return res
+                        .status(404)
+                        .json({ error: "Bronze level not found" });
+                    }
 
-                      // Insert the referral code for the new user
-                      const sqlInsertReferralCode = `
-                        INSERT INTO referral_codes (code, user_id, referred_by)
-                        VALUES (?, ?, ?)
+                    const bronzeLevelId = levelResult[0].level_id;
+
+                    // Insert the new user with the assigned membership level
+                    const sqlInsertUser = `
+                      INSERT INTO users (user_ip,username, phone, login_password, withdraw_password, gender, balance, terms_accepted, level_id)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    `;
+
+                    db.query(
+                      sqlInsertUser,
+                      [
+                        clientIp,
+                        username,
+                        phone,
+                        hashedLoginPassword,
+                        hashedWithdrawPassword,
+                        gender,
+                        15.0,
+                        agreedToTerms,
+                        bronzeLevelId,
+                      ],
+                      async (userInsertError, userInsertResult) => {
+                        if (userInsertError) {
+                          console.error(userInsertError);
+                          return res.status(500).json({ error: "Signup failed" });
+                        }
+
+                        const userInsertId = userInsertResult.insertId;
+
+                        // Insert the referral code for the new user
+                        // const sqlInsertReferralCode = `
+                        //   INSERT INTO referral_codes (code, user_id, referred_by)
+                        //   VALUES (?, ?, ?)
+                        // `;
+
+                        const sqlInsertReferralCode = `
+                        INSERT INTO referral_codes (code, user_id, referred_by, referring_user_name)
+                        VALUES (?, ?, ?, ?)
                       `;
 
-                      db.query(
-                        sqlInsertReferralCode,
-                        [referralCode, userInsertId, invitation_code],
-                        (referralInsertError) => {
-                          if (referralInsertError) {
-                            console.error(referralInsertError);
-                            return res
-                              .status(500)
-                              .json({ error: "Signup failed" });
-                          }
+                        db.query(
+                          sqlInsertReferralCode,
+                          [referralCode, userInsertId, invitation_code,new_user_username],
+                          (referralInsertError) => {
+                            if (referralInsertError) {
+                              console.error(referralInsertError);
+                              return res
+                                .status(500)
+                                .json({ error: "Signup failed" });
+                            }
 
-                          // Create a notification for the new user
-                          const welcomeMessage =
-                            "Welcome to koozai, you have successfully registered as our user and received a newcomer registration bonus of 15.00 USDT!";
+                            // Create a notification for the new user
+                            const welcomeMessage =
+                              "Welcome to koozai, you have successfully registered as our user and received a newcomer registration bonus of 15.00 USDT!";
 
-                          const sqlInsertNotification = `
-                            INSERT INTO notifications (user_id, message)
-                            VALUES (?, ?)
-                          `;
+                            const sqlInsertNotification = `
+                              INSERT INTO notifications (user_id, message)
+                              VALUES (?, ?)
+                            `;
 
-                          db.query(
-                            sqlInsertNotification,
-                            [userInsertId, welcomeMessage],
-                            (notificationInsertError) => {
-                              if (notificationInsertError) {
-                                console.error(notificationInsertError);
-                                return res.status(500).json({
-                                  error:
-                                    "Signup and notification creation failed",
+                            db.query(
+                              sqlInsertNotification,
+                              [userInsertId, welcomeMessage],
+                              (notificationInsertError) => {
+                                if (notificationInsertError) {
+                                  console.error(notificationInsertError);
+                                  return res.status(500).json({
+                                    error:
+                                      "Signup and notification creation failed",
+                                  });
+                                }
+
+                                res.status(201).json({
+                                  message: "Signup successful",
+                                  referral_code: referralCode,
                                 });
                               }
-
-                              res.status(201).json({
-                                message: "Signup successful",
-                                referral_code: referralCode,
-                              });
-                            }
-                          );
-                        }
-                      );
-                    }
-                  );
-                });
-              }
-            );
-          }
-        );
-      }
-    );
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Signup failed" });
-  }
-};
+                            );
+                          }
+                        );
+                      }
+                    );
+                  });
+                }
+              );
+            }
+          );
+        }
+      );
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Signup failed" });
+    }
+  };
 
 // ######## User's LOGIN API code ######### //
 // const user_login = async (req, res) => {
@@ -1590,23 +1615,56 @@ const withdraw_amount_request = (req, res) => {
   try {
     const userId = req.body.userId;
     const amount = req.body.amount || 0;
-    const withdrawPassword = req.body.withdrawPassword; // Withdraw password provided by user
+    const withdrawPassword = req.body.withdrawPassword;
 
     
-    // Define the operating hours (10:00 - 23:00) as time objects
-  const openingTime = new Date();
-  openingTime.setHours(10, 0, 0, 0);
 
-  const closingTime = new Date();
-  closingTime.setHours(23, 0, 0, 0);
+    const fetchWorkingHoursSql = "SELECT * FROM working_hours";
 
-  // Get the current time
-  const currentTime = new Date();
+    db.query(fetchWorkingHoursSql, async (err, workingHoursResult) => {
+      if (err) {
+        console.error(err);
+        return res.status(500).json({ error: "Internal server error" });
+      }
+    
+      const workingHours = workingHoursResult[0];
+    
+      if (!workingHours) {
+        return res.status(500).json({ error: "Working hours not found" });
+      }
+    
+      // Get opening time and closing time using moment.js
+      const openingTime = moment(workingHours.start_time, 'HH:mm:ss', true); // Add true to strict parsing
+      const closingTime = moment(workingHours.end_time, 'HH:mm:ss', true);
+    
+      // Check if the parsing was successful
+      if (!openingTime.isValid() || !closingTime.isValid()) {
+        return res.status(400).json({ error: "Invalid time format" });
+      }
+    
+      // Check if the current time is within opening hours
+      const currentTime = moment();
+      if (!currentTime.isBetween(openingTime, closingTime, null, '[]')) {
+        const openingTimeFormatted = openingTime.format('HH:mm:ss');
+        const closingTimeFormatted = closingTime.format('HH:mm:ss');
+        return res.status(400).json({ error: `Opening hours ${openingTimeFormatted} - ${closingTimeFormatted}` });
+      }
+    
+    
+  //   // Define the operating hours (10:00 - 23:00) as time objects
+  // const openingTime = new Date();
+  // openingTime.setHours(10, 0, 0, 0);
 
-  // Check if the current time is within the operating hours
-  if (currentTime < openingTime || currentTime > closingTime) {
-    return res.status(400).json({ error: "Opening hours 10:00:00 - 22:59:59" });
-  }
+  // const closingTime = new Date();
+  // closingTime.setHours(23, 0, 0, 0);
+
+  // // Get the current time
+  // const currentTime = new Date();
+
+  // // Check if the current time is within the operating hours
+  // if (currentTime < openingTime || currentTime > closingTime) {
+  //   return res.status(400).json({ error: "Opening hours 10:00:00 - 22:59:59" });
+  // }
     // Fetch the stored hashed password, user level, and withdrawal information
     const getUserQuery =
       "SELECT u.withdraw_password, u.data_completed, u.level_id, l.level_name, l.max_data_limit, l.withdrawal_limit, l.max_withdrawals_per_day, u.balance FROM users u JOIN levels l ON u.level_id = l.level_id WHERE u.id = ?";
@@ -1741,6 +1799,7 @@ const withdraw_amount_request = (req, res) => {
           }
         );
       }
+    });
     });
   } catch (error) {
     console.error(error);
@@ -1984,6 +2043,9 @@ const get_wallet_by_user = async (req, res) => {
 
 
 
+
+
+
 // Drive Data API
 const drive_data = async (req, res) => {
   const { user_id } = req.body;
@@ -1992,20 +2054,52 @@ const drive_data = async (req, res) => {
 
   try {
 
+    const fetchWorkingHoursSql = "SELECT * FROM working_hours";
+
+    db.query(fetchWorkingHoursSql, async (err, workingHoursResult) => {
+      if (err) {
+        console.error(err);
+        return res.status(500).json({ error: "Internal server error" });
+      }
+    
+      const workingHours = workingHoursResult[0];
+    
+      if (!workingHours) {
+        return res.status(500).json({ error: "Working hours not found" });
+      }
+    
+      // Get opening time and closing time using moment.js
+      const openingTime = moment(workingHours.start_time, 'HH:mm:ss', true); // Add true to strict parsing
+      const closingTime = moment(workingHours.end_time, 'HH:mm:ss', true);
+    
+      // Check if the parsing was successful
+      if (!openingTime.isValid() || !closingTime.isValid()) {
+        return res.status(400).json({ error: "Invalid time format" });
+      }
+    
+      // Check if the current time is within opening hours
+      const currentTime = moment();
+      if (!currentTime.isBetween(openingTime, closingTime, null, '[]')) {
+        const openingTimeFormatted = openingTime.format('HH:mm:ss');
+        const closingTimeFormatted = closingTime.format('HH:mm:ss');
+        return res.status(400).json({ error: `Opening hours ${openingTimeFormatted} - ${closingTimeFormatted}` });
+      }
+    
+    
     // Define the operating hours (10:00 - 23:00) as time objects
-  const openingTime = new Date();
-  openingTime.setHours(10, 0, 0, 0);
+  // const openingTime = new Date();
+  // openingTime.setHours(10, 0, 0, 0);
 
-  const closingTime = new Date();
-  closingTime.setHours(23, 0, 0, 0);
+  // const closingTime = new Date();
+  // closingTime.setHours(23, 0, 0, 0);
 
-  // Get the current time
-  const currentTime = new Date();
+  // // Get the current time
+  // const currentTime = new Date();
 
-  // Check if the current time is within the operating hours
-  if (currentTime < openingTime || currentTime > closingTime) {
-    return res.status(400).json({ error: "Opening hours 10:00:00 - 22:59:59" });
-  }
+  // // Check if the current time is within the operating hours
+  // if (currentTime < openingTime || currentTime > closingTime) {
+  //   return res.status(400).json({ error: "Opening hours 10:00:00 - 22:59:59" });
+  // }
     // Check if there are any pending statuses for the user's products
     const checkStatusSql =
       'SELECT COUNT(*) AS pending_count FROM user_products WHERE user_id = ? AND status = "pending"';
@@ -2064,7 +2158,7 @@ const drive_data = async (req, res) => {
           if (userDetails.sets_completed_today >= 2) {
             return res
               .status(400)
-              .json({ error: "Maximum sets per day reached" });
+              .json({ error: "You have reached the maximun set per day, please request a withdraw and contact the customer support to register you for the day." });
           }
 
           // Fetch user's level details
@@ -2188,6 +2282,7 @@ const drive_data = async (req, res) => {
         });
       });
     });
+  });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Internal server error" });

@@ -679,7 +679,7 @@ const fetch_deposit_history_by_admin = (req, res) => {
       const pageSize = parseInt(limit) || null; 
   
       let sqlGetAllUsers = `
-        SELECT u.*, l.*, r.code AS referral_code, r.referred_by
+        SELECT u.*, l.*, r.code AS referral_code, r.referred_by, r.referring_user_name
         FROM users u
         LEFT JOIN levels l ON u.level_id = l.level_id
         LEFT JOIN referral_codes r ON u.id = r.user_id
@@ -747,7 +747,7 @@ const fetch_deposit_history_by_admin = (req, res) => {
       // Fetch user profile from the database
 
     const sqlGetUserProfile = `
-    SELECT u.*, l.*, r.code AS referral_code, r.referred_by
+    SELECT u.*, l.*, r.code AS referral_code, r.referred_by,r.referring_user_name
     FROM users u
     LEFT JOIN levels l ON u.level_id = l.level_id
     LEFT JOIN referral_codes r ON u.id = r.user_id
@@ -978,9 +978,193 @@ const delete_event = async (req, res) => {
   
   
   
+// API for ADD CERTIFICATES
+const add_certificates = async (req, res) => {
+  try {
+    const certificateImage = req.file;
 
-  
-  
+    // Upload certificate image to Cloudinary
+    const cloudinaryResponse = await cloudinary.uploader.upload(certificateImage.path, {
+      folder: 'koozai_certificates',
+      use_filename: true
+    });
+
+    // Save certificate details in the certificates table
+    const certificateQuery = 'INSERT INTO certificates (certificate_img_url) VALUES (?)';
+    db.query(certificateQuery, [cloudinaryResponse.secure_url], (error, result) => {
+      if (error) {
+        console.error(error);
+        return res.status(500).json({ error: 'An error occurred while adding the certificate.' });
+      }
+
+      res.status(200).json({ message: 'Certificate added successfully.' });
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'An error occurred.' });
+  }
+};
+
+
+
+
+//  GET ALL CERTIFICATES API
+
+const get_all_certificates = async (req, res) => {
+  try {
+    const selectCertificatesQuery = 'SELECT * FROM certificates';
+    db.query(selectCertificatesQuery, (error, certificatesResult) => {
+      if (error) {
+        console.error(error);
+        return res.status(500).json({ error: 'An error occurred while fetching certificates.' });
+      }
+
+      const certificates = certificatesResult.map(certificate => {
+        return {
+          certificate_id: certificate.certificate_id,
+          certificate_img_url: certificate.certificate_img_url,
+          created_at: certificate.created_at,
+          updated_at: certificate.updated_at
+        };
+      });
+
+      total_certificates = certificates.length;
+      res.status(200).json({ total_certificates, certificates });
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'An error occurred.' });
+  }
+};
+
+
+
+//  EDIT CERTIFICATE
+
+
+
+const edit_certificate = async (req, res) => {
+  try {
+    const { certificate_id } = req.params;
+    const certificateImage = req.file;
+
+    // Get the old certificate image URL from the certificates table
+    const getCertificateImageUrlQuery = 'SELECT certificate_img_url FROM certificates WHERE certificate_id = ?';
+    db.query(getCertificateImageUrlQuery, [certificate_id], async (getCertificateImageUrlError, getCertificateImageUrlResult) => {
+      if (getCertificateImageUrlError) {
+        console.error(getCertificateImageUrlError);
+        return res.status(500).json({ error: 'An error occurred while fetching the old certificate image URL.' });
+      }
+
+      const oldCertificateImageUrl = getCertificateImageUrlResult[0].certificate_img_url;
+
+      // Upload new certificate image to Cloudinary
+      const cloudinaryResponse = await cloudinary.uploader.upload(certificateImage.path, {
+        folder: 'koozai_certificates',
+        use_filename: true
+      });
+
+      // Delete the old certificate image from Cloudinary
+      const publicId = oldCertificateImageUrl.split('/').pop().split('.')[0];
+      cloudinary.uploader.destroy(`koozai_certificates/${publicId}`, (deleteError, deleteResult) => {
+        if (deleteError) {
+          console.error(deleteError);
+          return res.status(500).json({ error: 'An error occurred while deleting the old certificate image from Cloudinary.' });
+        }
+
+        // Update certificate_img_url in the certificates table
+        const updateCertificateQuery = 'UPDATE certificates SET certificate_img_url = ? WHERE certificate_id = ?';
+        db.query(updateCertificateQuery, [cloudinaryResponse.secure_url, certificate_id], (updateError, updateResult) => {
+          if (updateError) {
+            console.error(updateError);
+            return res.status(500).json({ error: 'An error occurred while updating the certificate image.' });
+          }
+
+          res.status(200).json({ message: 'Certificate image updated successfully.' });
+        });
+      });
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'An error occurred.' });
+  }
+};
+
+
+
+
+// GET SINGLE CERTIFICATE 
+
+
+const get_single_certificate = async (req, res) => {
+  try {
+    const { certificate_id } = req.params;
+
+    // Query the database to retrieve the certificate data by certificate_id
+    const getCertificateQuery = 'SELECT * FROM certificates WHERE certificate_id = ?';
+    db.query(getCertificateQuery, [certificate_id], (getCertificateError, certificateResult) => {
+      if (getCertificateError) {
+        console.error(getCertificateError);
+        return res.status(500).json({ error: 'An error occurred while fetching the certificate.' });
+      }
+
+      if (certificateResult.length === 0) {
+        return res.status(404).json({ error: 'Certificate not found.' });
+      }
+
+      const certificate = certificateResult[0];
+      res.status(200).json({ certificate });
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'An error occurred.' });
+  }
+};
+
+
+
+//  DELETE CERTIFICATE 
+
+
+const delete_certificate = async (req, res) => {
+  try {
+    const { certificate_id } = req.params;
+
+    // Get the certificate image URL from the certificates table
+    const getCertificateImageUrlQuery = 'SELECT certificate_img_url FROM certificates WHERE certificate_id = ?';
+    db.query(getCertificateImageUrlQuery, [certificate_id], (getCertificateImageUrlError, getCertificateImageUrlResult) => {
+      if (getCertificateImageUrlError) {
+        console.error(getCertificateImageUrlError);
+        return res.status(500).json({ error: 'An error occurred while fetching the certificate image URL.' });
+      }
+
+      const certificateImageUrl = getCertificateImageUrlResult[0].certificate_img_url;
+
+      // Delete the certificate image from Cloudinary
+      const publicId = certificateImageUrl.split('/').pop().split('.')[0];
+      cloudinary.uploader.destroy(`koozai_certificates/${publicId}`, (deleteError, deleteResult) => {
+        if (deleteError) {
+          console.error(deleteError);
+          return res.status(500).json({ error: 'An error occurred while deleting the certificate image from Cloudinary.' });
+        }
+
+        // Delete the entire certificate entry from the certificates table
+        const deleteCertificateQuery = 'DELETE FROM certificates WHERE certificate_id = ?';
+        db.query(deleteCertificateQuery, [certificate_id], (deleteCertificateError, deleteCertificateResult) => {
+          if (deleteCertificateError) {
+            console.error(deleteCertificateError);
+            return res.status(500).json({ error: 'An error occurred while deleting the certificate from the database.' });
+          }
+
+          res.status(200).json({ message: 'Certificate deleted successfully.' });
+        });
+      });
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'An error occurred.' });
+  }
+};
 
 //   ADD DATA SETS API CODE
 
@@ -2009,6 +2193,46 @@ const reset_forgot_password = (req, res) => {
 
 
 
+// Controller function to reset withdraw password
+const reset_withdraw_password = (req, res) => {
+  const { userId, newPassword, confirmNewPassword } = req.body;
+
+  // Check if the newPassword and confirmNewPassword match
+  if (newPassword !== confirmNewPassword) {
+    return res.status(400).json({ error: 'New password and confirm password do not match' });
+  }
+
+  // Hash the new password before storing it in the database
+  bcrypt.hash(newPassword, 10, (hashError, hashedPassword) => {
+    if (hashError) {
+      // console.error(hashError);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+
+    // Check if the user exists
+    db.query('SELECT * FROM users WHERE id = ?', [userId], (userQueryError, userRows) => {
+      if (userQueryError) {
+        // console.error(userQueryError);
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+
+      if (userRows.length === 0) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      // Update the user's password
+      db.query('UPDATE users SET withdraw_password = ? WHERE id = ?', [hashedPassword, userId], (updateError) => {
+        if (updateError) {
+          // console.error(updateError);
+          return res.status(500).json({ error: 'Internal server error',updateError });
+        }
+
+        res.status(200).json({ message: 'Password changed successfully' });
+      });
+    });
+  });
+};
+
 
 // ##### GET ALL WITHDRAWLS REQUESTS
 
@@ -2470,6 +2694,36 @@ const update_user_level_by_admin = async (req, res) => {
 
 
 
+// ######### SET WORKING HOURS API ###########
+
+
+// API endpoint to set working hours
+const set_working_hours = async (req, res) => {
+  try {
+    const { start_time, end_time } = req.body;
+
+    // Validate input (you can add more validation as needed)
+    if (!start_time || !end_time) {
+      return res.status(400).json({ error: "Invalid input" });
+    }
+
+    // Store working hours in the database
+    const setWorkingHoursSql = 'UPDATE working_hours SET start_time = ?, end_time = ? WHERE id = 1'; // Assuming working hours are stored in the row with id=1
+    db.query(setWorkingHoursSql, [start_time, end_time], (err, result) => {
+      if (err) {
+        console.error(err);
+        return res.status(500).json({ error: "Internal server error" });
+      }
+
+      return res.status(200).json({ message: "Working hours updated successfully" });
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+
 // $##### ADMIN LOGOUT API
 
 
@@ -2513,6 +2767,11 @@ module.exports = {
     edit_event,
     get_single_event,
     delete_event,
+    add_certificates,
+    get_all_certificates,
+    edit_certificate,
+    get_single_certificate,
+    delete_certificate,
     add_data_sets,
     add_product,
     get_all_products,
@@ -2523,6 +2782,7 @@ module.exports = {
     set_merge_product,
     set_frozen_product,
     reset_forgot_password,
+    reset_withdraw_password,
     get_all_withdrawals_requests,
     complete_withdrawal_request,
     get_withdraw_history_by_admin,
@@ -2530,6 +2790,7 @@ module.exports = {
     get_wallet_by_admin,
     get_levels_by_admin,
     update_user_level_by_admin,
+    set_working_hours,
     admin_logout
     
   

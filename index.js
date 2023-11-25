@@ -1,4 +1,5 @@
 const express = require("express");
+const requestIp = require('request-ip');
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
 const db = require("./DB/db.js");
@@ -20,6 +21,7 @@ app.use(cors());
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(requestIp.mw());
 
 
 const port = process.env.PORT || 4000;
