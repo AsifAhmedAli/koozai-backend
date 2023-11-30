@@ -3885,6 +3885,31 @@ function automated_request_for_reset_user_account() {
 }
 
 
+// API endpoint to get working hours
+const get_working_hours = async (req, res) => {
+  try {
+    // Fetch working hours from the database
+    const getWorkingHoursSql = 'SELECT start_time, end_time FROM working_hours WHERE id = 1'; // Assuming working hours are stored in the row with id=1
+    db.query(getWorkingHoursSql, (err, result) => {
+      if (err) {
+        console.error(err);
+        return res.status(500).json({ error: "Internal server error" });
+      }
+
+      // Check if working hours are found
+      if (result.length === 0) {
+        return res.status(404).json({ error: "Working hours not found" });
+      }
+
+      const { start_time, end_time } = result[0];
+      return res.status(200).json({ start_time, end_time });
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
+
 
 
 
@@ -3918,5 +3943,6 @@ module.exports = {
   get_all_events,
   fetch_drive_data_status,
   get_customer_support,
-  automated_request_for_reset_user_account
+  automated_request_for_reset_user_account,
+  get_working_hours
 };

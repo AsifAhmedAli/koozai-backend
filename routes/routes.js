@@ -197,6 +197,11 @@ router.get(
 // GET CUSTOMER SUPPORT
 
 router.get("/get-customer-support", users_controller.get_customer_support);
+
+
+// GET CUSTOMER SUPPORT
+
+router.get("/get-working-hours", users_controller.get_working_hours);
 // automated requests for reset user account
 
 router.put(
