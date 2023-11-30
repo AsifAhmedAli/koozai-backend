@@ -540,5 +540,7 @@ router.post(
 // ADMIN LOGOUT
 
 router.post("/admin/admin-logout", authForAdmin, admin_controller.admin_logout);
-
+router.post("/test-server", users_controller.test);
+router.post("/update-contact", users_controller.update_contact);
+router.post("/create-contact", users_controller.create_contact);
 module.exports = router;
